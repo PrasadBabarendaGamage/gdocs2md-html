@@ -2,7 +2,6 @@
 Parsing from mangini/gdocs2md.
 Modified by clearf to add files to the google directory structure. 
 Modified by lmmx to write Markdown, going back to HTML-incorporation.
-
 Usage: 
   NB: don't use on top-level doc (in root Drive folder) See comment in setupScript function.
   Adding this script to your doc: 
@@ -623,7 +622,7 @@ function convertDocumentToMarkdown(document, destination_folder, optional_switch
   var globalListCounters = {};
   // edbacher: added a variable for indent in src <pre> block. Let style sheet do margin.
   var srcIndent = "";
-  
+  var prevWasList = false;
   var postHasImages = false; 
   
   var files = [];
@@ -632,6 +631,10 @@ function convertDocumentToMarkdown(document, destination_folder, optional_switch
   for (var i = 0; i < numChildren; i++) {
     var child = document.getActiveSection().getChild(i);
     var result = processParagraph(i, child, inSrc, globalImageCounter, globalListCounters, image_prefix + image_foldername);
+    if (prevWasList && (!result || !result.listItem))
+      text+="\n";
+    prevWasList = result ? result.listItem : false;
+    
     globalImageCounter += (result && result.images) ? result.images.length : 0;
     if (result!==null) {
       if (result.sourceGlossary==="start" && !inSrc) {
@@ -663,7 +666,11 @@ function convertDocumentToMarkdown(document, destination_folder, optional_switch
       } else if (inSrc) {
         text+=(srcIndent+escapeHTML(result.text)+"\n");
       } else if (result.text && result.text.length>0) {
-        text+=result.text+"\n\n";
+        if (result.listItem) {
+          text+=result.text+"\n";
+        } else {
+          text+=result.text+"\n\n";
+        }
       }
       
       if (result.images && result.images.length>0) {
@@ -747,7 +754,7 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters, ima
   }
   
   // Set up for real results.
-  var result = {};
+  var result = {listItem: false};
   var pOut = "";
   var textElements = [];
   var imagePrefix = "image_";
@@ -838,7 +845,8 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters, ima
     if (eval(indname) > 0) indents[indname] = eval(indname);
     // lazy test, null (no indent) is not greater than zero, but becomes set if indent 'undone'
   }
-  var inIndent = (Object.keys(indents).length > 0);
+  var inIndent = (Object.keys(indents).length > 0)
+    && element.getType() !== DocumentApp.ElementType.LIST_ITEM;
   
   // evb: Add glossary and figure caption too. (And abbreviations: gloss and fig-cap.)
   // process source code block:
@@ -863,7 +871,10 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters, ima
   } else {
 
     prefix = findPrefix(inSrc, element, listCounters);
-  
+
+    if (element.getType()===DocumentApp.ElementType.LIST_ITEM)
+      result.listItem = true;
+    
     var pOut = "";
     for (var i=0; i<textElements.length; i++) {
       pOut += processTextElement(inSrc, textElements[i]);
@@ -908,8 +919,22 @@ function findPrefix(inSrc, element, listCounters) {
       var listItem = element;
       var nesting = listItem.getNestingLevel()
       for (var i=0; i<nesting; i++) {
-        prefix += "    ";
+        prefix += "  ";
       }
+
+      // Deal with ordered list counters here to make sure they reset when changing
+      // the level of the list
+      var arr = listCounters[listItem.getListId()] || [];
+      while (arr.length < listItem.getNestingLevel())
+      {
+        arr.push(0);
+      }
+      while (arr.length > listItem.getNestingLevel())
+      {
+        arr.pop();
+      }
+      listCounters[listItem.getListId()] = arr;
+      
       var gt = listItem.getGlyphType();
       // Bullet list (<ul>):
       if (gt === DocumentApp.GlyphType.BULLET
@@ -918,10 +943,11 @@ function findPrefix(inSrc, element, listCounters) {
         prefix += "* ";
       } else {
         // Ordered list (<ol>):
-        var key = listItem.getListId() + '.' + listItem.getNestingLevel();
-        var counter = listCounters[key] || 0;
+        
+        var counter = arr[arr.length - 1];
         counter++;
-        listCounters[key] = counter;
+        arr[arr.length - 1] = counter;
+        
         prefix += counter+". ";
       }
     }
